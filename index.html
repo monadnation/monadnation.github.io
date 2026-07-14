@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Republic of Monad</title>
+  <link rel="stylesheet" href="css/style.css" />
+
+  <!--
+    Import map: loads Three.js (and its addons, e.g. GLTFLoader, RoomEnvironment)
+    straight from a CDN as native ES modules. No bundler, no npm install needed.
+    NOTE: this project must be served over HTTP (ES modules are blocked on file://).
+    Run it with e.g. `npx serve .` or the VS Code "Live Server" extension, then
+    open the printed localhost URL.
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <!-- Fixed full-viewport canvas: the 3D scene stays pinned behind the scrolling content -->
+  <canvas id="scene-canvas"></canvas>
+
+  <!-- Minimal loading indicator, hidden by main.js once the GLB has loaded -->
+  <div id="loading-indicator" class="loading-indicator">Loading…</div>
+
+  <!-- Inspect-mode hint, faded in/out by main.js when OrbitControls activates -->
+  <div id="inspect-hint" class="inspect-hint">
+    <span>Drag to rotate · Scroll to zoom</span>
+    <button id="inspect-exit" class="inspect-hint__exit" type="button">✕ Exit</button>
+  </div>
+
+  <main>
+    <header class="section hero" id="hero">
+      <h1 class="gradient-text">be Monad Citizen</h1>
+      <h2>be early</h2>
+      <h3>You can become a citizen with birth or naturalization way!</h3>
+    </header>
+
+    <section class="section" id="about">
+      <h2>What Is It?</h2>
+      <h3>
+        This is your identity document in the Monad Republic.
+      </h3>
+    </section>
+
+    <section class="section" id="features">
+      <h2>Get your activity stamps</h2>
+      <h3>
+        Get stamps from events or visas from NFT projects.
+      </h3>
+    </section>
+
+    <section class="section" id="details">
+      <h2>Get married</h2>
+      <h3>
+        Gay marriage is possible.
+      </h3>
+      <h3>
+        You can also obtain citizenship through marriage.
+      </h3>
+    </section>
+
+    <footer class="section" id="footer">
+      <h2>Drop your email</h2>
+      <p>Early birds will get %50 discount</p>
+
+      <form id="signup-form" class="signup-form" novalidate>
+        <div class="signup-form__field">
+          <label class="signup-form__label" for="signup-email">Email</label>
+          <input
+            id="signup-email"
+            class="signup-form__input"
+            type="email"
+            name="email"
+            maxlength="100"
+            required
+            autocomplete="email"
+            placeholder="you@example.com"
+          />
+        </div>
+
+        <div class="signup-form__field">
+          <label class="signup-form__label" for="signup-discord">Discord username</label>
+          <input
+            id="signup-discord"
+            class="signup-form__input"
+            type="text"
+            name="discord"
+            maxlength="50"
+            required
+            autocomplete="off"
+            placeholder="yourname"
+          />
+        </div>
+
+        <!-- Honeypot — invisible to real users (off-screen, not display:none,
+             so bots that skip display:none fields still fill it in), out of
+             the tab order, never autofocused. If it has a value on submit,
+             js/signup-form.js treats it as a bot and skips the Firestore write. -->
+        <div class="signup-form__honeypot" aria-hidden="true">
+          <label for="signup-website">Website</label>
+          <input
+            id="signup-website"
+            type="text"
+            name="website"
+            tabindex="-1"
+            autocomplete="off"
+          />
+        </div>
+
+        <button type="submit" id="signup-submit" class="signup-form__submit">
+          <span class="signup-form__spinner" aria-hidden="true"></span>
+          <span class="signup-form__submit-label">Join the waitlist</span>
+        </button>
+
+        <p id="signup-message" class="signup-form__message" role="status" aria-live="polite"></p>
+      </form>
+    </footer>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/signup-form.js"></script>
+</body>
+</html>

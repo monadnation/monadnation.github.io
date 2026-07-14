@@ -1,0 +1,357 @@
+/* ---------- Modern CSS reset ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeSpeed;
+  line-height: 1.5;
+}
+
+img, picture, video, canvas, svg {
+  display: block;
+  max-width: 100%;
+}
+
+input, button, textarea, select {
+  font: inherit;
+}
+
+p, h1, h2, h3 {
+  overflow-wrap: break-word;
+}
+
+/* ---------- Theme ---------- */
+:root {
+  --bg-color: #05050a;
+  --text-color: #f2f2f5;
+  --text-muted: #a0a0ac;
+  --accent: #7c8cff;
+  --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+body {
+  font-family: var(--font-stack);
+  color: var(--text-color);
+  background: var(--bg-color);
+  background-image: radial-gradient(
+      ellipse at top,
+      rgba(80, 70, 160, 0.15),
+      transparent 60%
+    ),
+    linear-gradient(180deg, #05050a 0%, #08080f 50%, #050507 100%);
+  background-attachment: fixed;
+}
+
+/* ---------- Three.js canvas ---------- */
+#scene-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  display: block;
+  pointer-events: none; /* let scroll/click events pass through to the page */
+}
+
+/* ---------- Loading indicator ---------- */
+.loading-indicator {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: var(--bg-color);
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.loading-indicator.is-hidden {
+  opacity: 0;
+}
+
+/* ---------- Inspect-mode hint ---------- */
+.inspect-hint {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.inspect-hint.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.inspect-hint__exit {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.inspect-hint__exit:hover {
+  opacity: 1;
+}
+
+/* ---------- Scrollable content layered above the canvas ---------- */
+main {
+  position: relative;
+  z-index: 1;
+  /* pointer-events:none on .section alone isn't enough: it only exempts
+     that element, not its ancestor. Without this, a click that misses every
+     .section's own pointer-events:none exemption still hits <main> itself
+     (the next valid target up the tree) instead of falling through to the
+     canvas below — which is exactly what blocked inspect-mode dragging.
+     #inspect-hint is a sibling of <main>, not a descendant, so it is
+     unaffected by this and keeps working via its own pointer-events rules. */
+  pointer-events: none;
+}
+
+main a,
+main button,
+main input,
+main label {
+  pointer-events: auto;
+}
+
+.section {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  text-align: center;
+  padding: 2rem;
+  background: transparent; /* keep the 3D scene visible behind the text */
+  /* Let empty section space pass clicks/drags through to the canvas below —
+     this is what makes inspect-mode dragging work, since .section otherwise
+     sits above the canvas (z-index 1 vs 0) and would swallow the pointer
+     events first. Text/links opt back in below so they stay selectable/clickable. */
+  pointer-events: none;
+}
+
+.section h1,
+.section h2,
+.section h3,
+.section p,
+.section a,
+.section button,
+.section input,
+.section label {
+  pointer-events: auto;
+}
+
+.section h1 {
+  font-size: clamp(2.5rem, 6vw, 5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.section h2 {
+  font-size: clamp(1.75rem, 4vw, 2.75rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.section p {
+  max-width: 40ch;
+  color: var(--text-muted);
+  font-size: 1.05rem;
+}
+
+.hero p {
+  color: var(--text-color);
+  opacity: 0.85;
+}
+
+/* ---------- Responsive hero/text layout ---------- */
+/* Desktop: confine text to the left ~40% column so it never overlaps the
+   3D model, which main.js shifts into the right ~60% via modelGroup.position.x. */
+@media (min-width: 900px) {
+  .section {
+    align-items: flex-start;
+    text-align: left;
+    max-width: 42vw;
+  }
+}
+
+/* Mobile: single column, centered text over a centered model (default
+   .section rules already do this) — just trim the hero title a bit. */
+@media (max-width: 899px) {
+  .hero h1 {
+    font-size: clamp(2rem, 9vw, 3.25rem);
+  }
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #c4b5fd 0%, #8b5cf6 40%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent; /* fallback */
+}
+
+/* ---------- Signup form ---------- */
+.signup-form {
+  position: relative; /* containing block for the honeypot's absolute offset */
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 24rem;
+  margin-top: 0.5rem;
+}
+
+.signup-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+}
+
+.signup-form__label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.signup-form__input {
+  padding: 0.65rem 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-color);
+  font-size: 0.95rem;
+}
+
+.signup-form__input::placeholder {
+  color: rgba(242, 242, 245, 0.35);
+}
+
+.signup-form__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
+/* Honeypot — off-screen, not display:none, so bots that skip display:none
+   fields still fill it in. The 1px/overflow:hidden container clips the
+   -9999px-offset input so it can't create page-wide horizontal scroll. */
+.signup-form__honeypot {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.signup-form__honeypot input {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+}
+
+.signup-form__submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #c4b5fd 0%, #8b5cf6 40%, #3b82f6 100%);
+  color: #0a0a12;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.signup-form__submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.signup-form__submit:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.signup-form__submit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.signup-form.is-done .signup-form__submit {
+  display: none;
+}
+
+.signup-form__spinner {
+  display: none;
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid rgba(10, 10, 18, 0.35);
+  border-top-color: #0a0a12;
+  border-radius: 50%;
+  animation: signup-spin 0.6s linear infinite;
+}
+
+.signup-form__submit.is-loading .signup-form__spinner {
+  display: inline-block;
+}
+
+@keyframes signup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.signup-form__message {
+  min-height: 1.2em;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.signup-form__message.is-error {
+  color: #f87171;
+}
+
+.signup-form__message.is-success {
+  color: #a7f3d0;
+  font-weight: 600;
+}
