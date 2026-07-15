@@ -27,6 +27,7 @@ const db = getFirestore(app);
 
 // Writes one signup document to the 'signups' collection. Returns the
 // addDoc() promise so callers can await it and catch failures themselves.
+// kept for future use (a signup flow may return inside the modals later)
 export function submitSignup(email, discord) {
   return addDoc(collection(db, "signups"), {
     email,

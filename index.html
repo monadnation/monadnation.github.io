@@ -30,10 +30,51 @@
   <!-- Minimal loading indicator, hidden by main.js once the GLB has loaded -->
   <div id="loading-indicator" class="loading-indicator">Loading…</div>
 
-  <!-- Inspect-mode hint, faded in/out by main.js when OrbitControls activates -->
-  <div id="inspect-hint" class="inspect-hint">
-    <span>Drag to rotate · Scroll to zoom</span>
-    <button id="inspect-exit" class="inspect-hint__exit" type="button">✕ Exit</button>
+  <!-- Reusable modal overlay for the end-of-page CTA buttons — one overlay,
+       content swapped in per click (see js/modal.js), not four separate
+       overlay structures. -->
+  <div id="modal-overlay" class="modal-overlay">
+    <div id="modal-card" class="modal-card" role="dialog" aria-modal="true">
+      <button type="button" id="modal-close" class="modal-close" aria-label="Close">✕</button>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Modal content panels — inert here until js/modal.js moves the one
+       matching a button's data-modal attribute into #modal-body.
+       TODO: these are same-page overlays, not real navigation. If any of
+       these ever need a shareable URL or back-button support, convert them
+       to real routes instead of extending this overlay. -->
+  <div id="modal-content-store" hidden>
+    <div id="modal-citizenship" class="modal-panel">
+      <h2 id="modal-citizenship-title">Apply to Citizenship</h2>
+      <p>Applications have not yet opened.</p>
+    </div>
+
+    <div id="modal-marriage" class="modal-panel">
+      <h2 id="modal-marriage-title">Apply to Marriage</h2>
+      <p>Applications have not yet opened.</p>
+    </div>
+  </div>
+
+  <!-- Inspect-mode panel — shown by main.js in place of the CTA buttons
+       while "Check Example Passport" has OrbitControls active. Sibling of
+       main, not a descendant, so it isn't affected by main's
+       pointer-events: none cascade. -->
+  <div id="inspect-panel" class="inspect-panel">
+    <button type="button" class="inspect-panel__button" data-pose="cover">Open Cover</button>
+    <button type="button" class="inspect-panel__button" data-pose="page1">Page 1</button>
+    <button type="button" class="inspect-panel__button" data-pose="closed">Close Book</button>
+    <button type="button" class="inspect-panel__button inspect-panel__button--close" id="inspect-exit">Exit</button>
+  </div>
+
+  <!-- Inspect-mode onboarding hint — fades in when inspect mode activates,
+       auto-fades after a few seconds or on the first drag/zoom (see
+       js/main.js). Sibling of main so it's outside its pointer-events: none
+       cascade, but pointer-events: none itself so it never blocks the
+       canvas drag/zoom underneath it. -->
+  <div id="inspect-onboarding" class="inspect-onboarding">
+    🖱 Drag to rotate · Scroll to zoom · Right-drag to pan
   </div>
 
   <main>
@@ -67,65 +108,24 @@
       </h3>
     </section>
 
+    <section class="section" id="stamps">
+      <h2 class="gradient-text">Stamps & Visas</h2>
+      <h3>
+        Collect stamps from the events you attend and visas issued by partner
+        NFT projects — each one a permanent mark on your passport's pages.
+      </h3>
+    </section>
+
     <footer class="section" id="footer">
-      <h2 class="gradient-text">Drop your email</h2>
-      <p>Early birds will get %50 discount</p>
-
-      <form id="signup-form" class="signup-form" novalidate>
-        <div class="signup-form__field">
-          <label class="signup-form__label" for="signup-email">Email</label>
-          <input
-            id="signup-email"
-            class="signup-form__input"
-            type="email"
-            name="email"
-            maxlength="100"
-            required
-            autocomplete="email"
-            placeholder="you@example.com"
-          />
-        </div>
-
-        <div class="signup-form__field">
-          <label class="signup-form__label" for="signup-discord">Discord username</label>
-          <input
-            id="signup-discord"
-            class="signup-form__input"
-            type="text"
-            name="discord"
-            maxlength="50"
-            required
-            autocomplete="off"
-            placeholder="yourname"
-          />
-        </div>
-
-        <!-- Honeypot — invisible to real users (off-screen, not display:none,
-             so bots that skip display:none fields still fill it in), out of
-             the tab order, never autofocused. If it has a value on submit,
-             js/signup-form.js treats it as a bot and skips the Firestore write. -->
-        <div class="signup-form__honeypot" aria-hidden="true">
-          <label for="signup-website">Website</label>
-          <input
-            id="signup-website"
-            type="text"
-            name="website"
-            tabindex="-1"
-            autocomplete="off"
-          />
-        </div>
-
-        <button type="submit" id="signup-submit" class="signup-form__submit">
-          <span class="signup-form__spinner" aria-hidden="true"></span>
-          <span class="signup-form__submit-label">Join the waitlist</span>
-        </button>
-
-        <p id="signup-message" class="signup-form__message" role="status" aria-live="polite"></p>
-      </form>
+      <div class="cta-actions">
+        <button type="button" class="cta-button cta-button--secondary" id="inspect-toggle">Check Example Passport</button>
+        <button type="button" class="cta-button cta-button--primary" data-modal="citizenship">Apply to Citizenship</button>
+        <button type="button" class="cta-button cta-button--primary" data-modal="marriage">Apply to Marriage</button>
+      </div>
     </footer>
   </main>
 
   <script type="module" src="js/main.js"></script>
-  <script type="module" src="js/signup-form.js"></script>
+  <script type="module" src="js/modal.js"></script>
 </body>
 </html>

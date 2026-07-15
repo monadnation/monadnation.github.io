@@ -30,42 +30,63 @@ const CORRECTIVE_ROTATION_X = Math.PI;
 // the X correction above changes which local axis this roll actually acts
 // on in screen space.
 const CORRECTIVE_ROTATION_Z = -Math.PI / 2;
-// How quickly action.time eases toward its current target each frame (0-1).
-// One factor, one lerp, used for both normal scroll-driven scrubbing and the
-// inspect-mode display-pose swing (~0.5-0.6s to settle) — see animate().
+// How quickly the shared action time eases toward the scroll-derived target
+// each frame (0-1) — see animate().
 const SCRUB_LERP_FACTOR = 0.1;
-// Scroll progress at/above which inspect mode (free OrbitControls) takes over.
-const INSPECT_THRESHOLD = 0.98;
-// Fraction of the clip's duration used as the "display pose" action.time
-// eases to while inspecting: the mid-closing 90°-open pose (~75%), which
-// sits closer to the page-end (fully closed) state than the mid-opening
-// 90°-open pose at ~25%, so the swing into position travels less distance.
-// 0.25 is the equivalent alternative pose if the closer-to-open feel is preferred.
-const DISPLAY_POSE_FRACTION = 0.75;
-// How quickly the camera eases back to its resting pose after leaving inspect mode (0-1/frame).
-const CAMERA_RESET_LERP_FACTOR = 0.1;
 // Matches the CSS breakpoint that switches the hero/text layout to two columns.
 const DESKTOP_MEDIA_QUERY = "(min-width: 900px)";
 // On desktop the text column occupies the left 40% of the viewport, so the
 // model should be horizontally centered in the middle of the remaining right
 // 60% — i.e. at 40% + 60%/2 = 70% of viewport width instead of the default 50%.
 const DESKTOP_MODEL_CENTER_FRACTION = 0.7;
+// Scroll progress at/above which the model eases back to screen center for
+// the final CTA section (whose text is centered too, not left-column).
+const RECENTER_THRESHOLD = 0.85;
+// Once recentered, the model must stay within this fraction of the viewport
+// height (measured from the top) so it doesn't extend behind the CTA button
+// row pinned to the bottom of the final section. Mobile stacks all three
+// buttons into one taller column — a fixed rem-based height that eats a much
+// bigger share of a typical phone's shorter viewport than the single-row
+// desktop layout does — so it needs a tighter fit than desktop's ~75%.
+const RECENTER_VERTICAL_FIT_DESKTOP = 0.75;
+const RECENTER_VERTICAL_FIT_MOBILE = 0.65;
+// Pose fractions for the inspect-mode panel buttons, expressed as positions
+// in the combined ~110-frame Blender timeline (cover opens ~1-30, pause,
+// first page flips ~40-70, pause, everything closes ~80-110): frame 30 is
+// the cover fully open, frame 70 is the first page fully flipped. Closed is
+// just action time 0 — named for symmetry with the other two.
+const POSE_CLOSED = 0;
+const POSE_COVER_OPEN = 30 / 110;
+const POSE_PAGE_FLIPPED = 70 / 110;
+// How quickly the camera eases back to its pre-inspect pose on close (0-1/frame).
+const CAMERA_RESET_LERP_FACTOR = 0.1;
+// How long the inspect-mode controls-onboarding hint stays up before auto-fading.
+const ONBOARDING_HINT_DURATION_MS = 4000;
 
 // ---------- Module-level state ----------
 let scene, camera, renderer;
 let modelGroup;
-let mixer, action, clip;
+let mixer;
+let actions = []; // one clipAction per gltf.animations entry, all sharing one eased time
+let maxDuration = 0; // longest clip duration — drives the scroll-to-time mapping
+let easedActionTime = 0; // current eased value shared by every action.time
+let easedOffsetX = 0; // current eased value of modelGroup.position.x
+let easedOffsetY = 0; // current eased value of modelGroup's base y position (idle bob layers on top)
+let scrollProgress = 0; // 0 at top of page, 1 at bottom
 let controls;
 let inspectMode = false;
-let initialCameraPosition, initialCameraQuaternion;
-let scrollProgress = 0; // 0 at top of page, 1 at bottom
-let displayPoseTime = 0; // clip.duration * DISPLAY_POSE_FRACTION, set once the clip loads
+let initialCameraPosition, initialCameraQuaternion; // captured on entering inspect mode, restored on close
+let inspectPoseTarget = 0; // action-time target driven by the Cover/Page 1 buttons while inspecting
+let onboardingTimeoutId = null; // pending auto-fade timer for the inspect-mode onboarding hint
 
 const clock = new THREE.Clock();
 const canvas = document.getElementById("scene-canvas");
 const loadingIndicator = document.getElementById("loading-indicator");
-const inspectHint = document.getElementById("inspect-hint");
+const ctaActions = document.querySelector(".cta-actions");
+const inspectPanel = document.getElementById("inspect-panel");
+const inspectToggle = document.getElementById("inspect-toggle");
 const inspectExitButton = document.getElementById("inspect-exit");
+const inspectOnboarding = document.getElementById("inspect-onboarding");
 const desktopMediaQuery = window.matchMedia(DESKTOP_MEDIA_QUERY);
 
 // ---------- Scene setup ----------
@@ -79,8 +100,6 @@ function initScene() {
     100
   );
   camera.position.set(0, 0, 5);
-  initialCameraPosition = camera.position.clone();
-  initialCameraQuaternion = camera.quaternion.clone();
 
   renderer = new THREE.WebGLRenderer({
     canvas,
@@ -113,42 +132,36 @@ function initLights() {
 }
 
 // ---------- Inspect-mode controls ----------
-// OrbitControls power a "step outside the scroll timeline and look around"
-// mode, only active once the scroll-driven animation has fully played.
+// OrbitControls, created once and disabled by default — "Check Example
+// Passport" toggles them on via setInspectMode().
 function initControls() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enabled = false;
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
   controls.enablePan = true;
-  controls.screenSpacePanning = true; // pan along the screen plane, not the target's ground plane
-  controls.panSpeed = 0.5; // keep panning modest relative to rotate/zoom
+  controls.screenSpacePanning = true;
+  controls.panSpeed = 0.5;
+  controls.enableZoom = true;
 
-  // Placeholder distances until the model loads and frameModel() refines
-  // them against its actual bounding box.
+  // Placeholder distances until the model loads and loadPassportModel()
+  // refines them against its actual bounding sphere.
   const distance = camera.position.length();
   controls.minDistance = distance * 0.5;
   controls.maxDistance = distance * 3;
 }
 
-function setInspectMode(enabled) {
-  if (enabled === inspectMode) return;
-
-  inspectMode = enabled;
-  controls.enabled = enabled;
-  canvas.style.pointerEvents = enabled ? "auto" : "none";
-  if (inspectHint) inspectHint.classList.toggle("is-visible", enabled);
-
-  if (enabled) {
-    // Orbit around the model's actual position, not the world origin — on
-    // desktop the model is shifted off-center by updateModelLayout(), so
-    // pivoting at (0,0,0) would swing it out of frame while orbiting.
-    const pivotX = modelGroup ? modelGroup.position.x : 0;
-    controls.target.set(pivotX, 0, 0);
-  }
+// ---------- Model loading ----------
+// World-space vertical extent visible in the camera frustum, at the fixed
+// distance the camera and model sit at. Depends only on fov/distance (both
+// constant — there's no camera movement or zoom in this app anymore), so
+// it's resize-invariant and cheap enough to call every frame.
+function getVisibleHeight() {
+  const distance = camera.position.z;
+  const fovRadians = THREE.MathUtils.degToRad(camera.fov);
+  return 2 * Math.tan(fovRadians / 2) * distance;
 }
 
-// ---------- Model loading ----------
 // Recenters `object` at the origin and returns a scale that makes its
 // largest bounding-box dimension fill FILL_RATIO of the camera's visible
 // height at its current distance — derived from the model, not guessed.
@@ -162,11 +175,7 @@ function frameModel(object) {
   object.position.sub(center);
 
   const maxDim = Math.max(size.x, size.y, size.z);
-  const distance = camera.position.z;
-  const fovRadians = THREE.MathUtils.degToRad(camera.fov);
-  const visibleHeight = 2 * Math.tan(fovRadians / 2) * distance;
-  const scale = (visibleHeight * FILL_RATIO) / maxDim;
-
+  const scale = (getVisibleHeight() * FILL_RATIO) / maxDim;
   const boundingRadius = box.getBoundingSphere(new THREE.Sphere()).radius * scale;
 
   return { scale, boundingRadius };
@@ -182,9 +191,6 @@ function loadPassportModel() {
   loader.load(
     "assets/passportanimation.glb",
     (gltf) => {
-      // Debug: confirm the clip name/duration the scroll scrubber will use.
-      console.log("Passport model animations:", gltf.animations);
-
       const model = gltf.scene;
 
       // Corrective wrapper for the Blender Z-up export, kept separate from
@@ -208,20 +214,38 @@ function loadPassportModel() {
       modelGroup.scale.setScalar(scale);
       modelGroup.rotation.y = BASE_ROTATION_Y;
       scene.add(modelGroup);
-      updateModelLayout(); // apply the desktop/mobile x offset as soon as the model exists
 
       // Now that the model's real size is known, keep orbit zoom from going
       // inside the passport or drifting off to an unreadable distance.
       controls.minDistance = boundingRadius * 1.4;
       controls.maxDistance = boundingRadius * 6;
 
+      // Seed the eased offsets at their correct starting values (matters if
+      // the user has already scrolled past RECENTER_THRESHOLD by the time
+      // the GLB finishes loading) so the model doesn't visibly slide in
+      // from screen center/normal height on first load — animate() takes
+      // over easing from here for every later change.
+      easedOffsetX = getModelTargetOffsetX();
+      easedOffsetY = getModelTargetOffsetY();
+      modelGroup.position.x = easedOffsetX;
+      modelGroup.position.y = easedOffsetY;
+
+      // Drive every clip (cover-open, page-flip, close-all, ...) from the
+      // same AnimationMixer and the same shared eased time value, so the
+      // combined timeline advances as one continuous scroll-driven sequence.
       if (gltf.animations.length > 0) {
-        clip = gltf.animations[0];
-        displayPoseTime = clip.duration * DISPLAY_POSE_FRACTION;
         mixer = new THREE.AnimationMixer(model);
-        action = mixer.clipAction(clip);
-        action.play();
-        action.paused = true; // scroll (or inspect mode) drives time — it must not play on its own
+        actions = gltf.animations.map((animClip) => {
+          console.log(
+            "Clip:", animClip.name,
+            "duration:", animClip.duration.toFixed(2)
+          );
+          const clipAction = mixer.clipAction(animClip);
+          clipAction.play();
+          clipAction.paused = true; // scroll drives time — clips must not play on their own
+          return clipAction;
+        });
+        maxDuration = Math.max(...gltf.animations.map((animClip) => animClip.duration));
       }
 
       hideLoadingIndicator();
@@ -248,27 +272,104 @@ function initScrollTracking() {
     "scroll",
     () => {
       scrollProgress = getScrollProgress();
-      setInspectMode(scrollProgress >= INSPECT_THRESHOLD);
+      // TODO: end-of-page menu will be added here
     },
     { passive: true }
   );
 }
 
-// Lets the user back out of inspect mode without having to find empty page
-// space to scroll from — nudges scroll progress back below the threshold.
-function initInspectExit() {
-  if (!inspectExitButton) return;
-  inspectExitButton.addEventListener("click", () => {
-    window.scrollBy({ top: -200, left: 0, behavior: "smooth" });
-  });
+// ---------- Inspect mode ----------
+// "Check Example Passport" toggles free orbit/pan/zoom on the model via
+// OrbitControls, replacing the CTA row with a small pose panel. Lesson from
+// the previous inspect implementation: pointer events must actually reach
+// the canvas — canvas.style.pointerEvents is toggled directly here (inline
+// style beats the CSS default), and both the canvas and #inspect-panel are
+// body-level siblings of <main>, so neither is caught by main's
+// pointer-events: none cascade in the first place.
+function onInspectKeydown(event) {
+  if (event.key === "Escape") setInspectMode(false);
 }
 
-// Keeps the model's column offset in sync with the desktop/mobile
-// breakpoint — covers window resizes that cross 900px and, on devices
-// where that isn't a plain "resize" (e.g. some browsers on tablet
-// rotation), the matchMedia change event fires either way.
-function initResponsiveLayout() {
-  desktopMediaQuery.addEventListener("change", updateModelLayout);
+// Shown on every inspect activation (no persistence across sessions at this
+// stage). Auto-fades after ONBOARDING_HINT_DURATION_MS, or earlier the
+// moment the user actually drags or scrolls the canvas — either path runs
+// through hideInspectOnboarding, which clears the timer and removes both
+// listeners together so a stale timeout can't fire after the user has
+// already left inspect mode (or dismissed the hint themselves).
+function showInspectOnboarding() {
+  if (!inspectOnboarding) return;
+  inspectOnboarding.classList.add("is-visible");
+  onboardingTimeoutId = setTimeout(hideInspectOnboarding, ONBOARDING_HINT_DURATION_MS);
+  canvas.addEventListener("pointerdown", hideInspectOnboarding);
+  canvas.addEventListener("wheel", hideInspectOnboarding);
+}
+
+function hideInspectOnboarding() {
+  if (!inspectOnboarding) return;
+  inspectOnboarding.classList.remove("is-visible");
+  clearTimeout(onboardingTimeoutId);
+  onboardingTimeoutId = null;
+  canvas.removeEventListener("pointerdown", hideInspectOnboarding);
+  canvas.removeEventListener("wheel", hideInspectOnboarding);
+}
+
+function setInspectMode(enabled) {
+  if (enabled === inspectMode) return;
+  inspectMode = enabled;
+
+  if (enabled) {
+    // Stored fresh each time rather than once at init, per the requirement —
+    // though since nothing else ever moves the camera outside inspect mode,
+    // this is always (0, 0, 5)/identity in practice.
+    initialCameraPosition = camera.position.clone();
+    initialCameraQuaternion = camera.quaternion.clone();
+    if (modelGroup) controls.target.copy(modelGroup.position);
+    // Default to closed: activation happens at the page-bottom CTA section,
+    // where scroll already dictates the closed pose, so this is little to
+    // no visible movement rather than an unprompted auto-open.
+    inspectPoseTarget = POSE_CLOSED * maxDuration;
+    document.addEventListener("keydown", onInspectKeydown);
+    showInspectOnboarding();
+  } else {
+    document.removeEventListener("keydown", onInspectKeydown);
+    hideInspectOnboarding();
+  }
+
+  controls.enabled = enabled;
+  canvas.style.pointerEvents = enabled ? "auto" : "none";
+  // Locks page scroll while inspecting so it can't fight the orbit/pan/zoom
+  // gestures, and so the scroll-driven animation can't move underneath it.
+  document.body.style.overflow = enabled ? "hidden" : "";
+
+  if (ctaActions) ctaActions.classList.toggle("is-hidden", enabled);
+  if (inspectPanel) inspectPanel.classList.toggle("is-open", enabled);
+
+  if (!enabled && inspectToggle) inspectToggle.focus();
+}
+
+function initInspectUI() {
+  if (inspectToggle) {
+    inspectToggle.addEventListener("click", () => setInspectMode(true));
+  }
+  if (inspectExitButton) {
+    inspectExitButton.addEventListener("click", () => setInspectMode(false));
+  }
+
+  // "Close Book" (data-pose="closed") eases the animation back to 0 but
+  // stays in inspect mode — distinct from "Exit", which leaves inspect mode
+  // entirely. Splitting these two avoids the old single "Close" button being
+  // ambiguous between the two meanings.
+  const posesByKey = {
+    cover: POSE_COVER_OPEN,
+    page1: POSE_PAGE_FLIPPED,
+    closed: POSE_CLOSED,
+  };
+
+  document.querySelectorAll("[data-pose]").forEach((button) => {
+    button.addEventListener("click", () => {
+      inspectPoseTarget = posesByKey[button.dataset.pose] * maxDuration;
+    });
+  });
 }
 
 // ---------- Render loop ----------
@@ -279,36 +380,65 @@ function animate() {
 
   if (modelGroup) {
     // Subtle idle motion, small enough to stay out of the way of the
-    // scroll-driven cover-opening animation (which lives on the mixer, not
-    // on this group's transform).
+    // scroll-driven animation clips (which live on the mixer, not on this
+    // group's transform).
     modelGroup.rotation.y =
       BASE_ROTATION_Y + Math.sin(elapsed * 0.4) * THREE.MathUtils.degToRad(3);
-    modelGroup.position.y = Math.sin(elapsed * 0.6) * 0.03;
+
+    // Ease the desktop column offset — and the page-end recenter back to
+    // screen center — instead of snapping, reusing the same lerp pattern
+    // as the animation scrubbing below.
+    easedOffsetX = THREE.MathUtils.lerp(
+      easedOffsetX,
+      getModelTargetOffsetX(),
+      SCRUB_LERP_FACTOR
+    );
+    modelGroup.position.x = easedOffsetX;
+
+    // Same pattern for the vertical nudge that keeps the recentered model
+    // clear of the CTA button row; the idle bob layers on top of it.
+    easedOffsetY = THREE.MathUtils.lerp(
+      easedOffsetY,
+      getModelTargetOffsetY(),
+      SCRUB_LERP_FACTOR
+    );
+    modelGroup.position.y = easedOffsetY + Math.sin(elapsed * 0.6) * 0.03;
   }
 
-  if (action) {
-    // Single eased target for action.time: the scroll-driven position in
-    // normal mode, or the fixed display pose while inspecting. Recomputed
-    // fresh from current state every frame rather than stored as a
-    // separate tween, so entering/leaving inspect mode just retargets the
-    // same lerp — no stacked animations, no jump, and rapid toggling back
-    // and forth simply redirects the ease instead of jittering.
+  if (actions.length > 0) {
+    // One eased time value shared by every clip, so the cover-open,
+    // page-flip, and close-all clips all advance together as a single
+    // sequence. Normally scroll-driven; while inspecting, the Cover/Page 1
+    // buttons drive it instead (no scroll influence — page scroll is locked
+    // anyway) and closing hands it back to scroll with no snap, since it's
+    // the same eased value either way. Each clip's own time is clamped to
+    // its own duration in case clips don't all run exactly maxDuration long.
     const targetActionTime = inspectMode
-      ? displayPoseTime
-      : scrollProgress * clip.duration;
-    action.time = THREE.MathUtils.lerp(
-      action.time,
+      ? inspectPoseTarget
+      : scrollProgress * maxDuration;
+    easedActionTime = THREE.MathUtils.lerp(
+      easedActionTime,
       targetActionTime,
       SCRUB_LERP_FACTOR
     );
+    for (const clipAction of actions) {
+      clipAction.time = THREE.MathUtils.clamp(
+        easedActionTime,
+        0,
+        clipAction.getClip().duration
+      );
+    }
     mixer.update(0);
   }
 
   if (inspectMode) {
     controls.update();
-  } else {
-    // Ease the camera back to its resting pose after leaving inspect mode,
-    // instead of snapping it back on the next scroll tick.
+  } else if (initialCameraPosition) {
+    // Ease the camera back to its pre-inspect pose after closing, instead of
+    // snapping. Only reachable from the `!inspectMode` branch, so it can
+    // never run while inspection is active and fight OrbitControls. Guarded
+    // on initialCameraPosition since it's undefined until inspect mode has
+    // been entered at least once — before that the camera is already at rest.
     camera.position.lerp(initialCameraPosition, CAMERA_RESET_LERP_FACTOR);
     camera.quaternion.slerp(initialCameraQuaternion, CAMERA_RESET_LERP_FACTOR);
   }
@@ -317,26 +447,43 @@ function animate() {
 }
 
 // ---------- Responsive model layout ----------
-// World-space X offset that puts the model in the middle of the desktop
-// text-free column, or 0 (screen center) below the breakpoint. Computed
-// from the camera's frustum width at the model's viewing distance rather
-// than a hardcoded pixel/world value, so it stays correct at any viewport
-// size or aspect ratio.
-function getModelOffsetX() {
+// World-space X offset the model eases toward: 0 (screen center) once
+// scroll progress reaches the page-end CTA section OR below the desktop
+// breakpoint (mobile is already centered), otherwise the middle of the
+// desktop text-free column. Computed from the camera's frustum width at
+// the model's viewing distance rather than a hardcoded pixel/world value,
+// so it's correct at any viewport size or aspect ratio, and it's simply
+// re-read every frame in animate() rather than recomputed on specific
+// events — so resizes and breakpoint changes ease smoothly too.
+function getModelTargetOffsetX() {
+  if (scrollProgress >= RECENTER_THRESHOLD) return 0;
   if (!desktopMediaQuery.matches) return 0;
 
-  const distance = camera.position.z;
-  const fovRadians = THREE.MathUtils.degToRad(camera.fov);
-  const visibleHeight = 2 * Math.tan(fovRadians / 2) * distance;
-  const visibleWidth = visibleHeight * camera.aspect;
-
+  const visibleWidth = getVisibleHeight() * camera.aspect;
   const shiftFraction = DESKTOP_MODEL_CENTER_FRACTION - 0.5;
   return shiftFraction * visibleWidth;
 }
 
-function updateModelLayout() {
-  if (!modelGroup) return;
-  modelGroup.position.x = getModelOffsetX();
+// World-space Y the model's center eases toward once scroll reaches
+// RECENTER_THRESHOLD, so its bottom edge stops at RECENTER_VERTICAL_FIT of
+// the viewport height instead of drifting down into the button row pinned
+// below it. The model's actual on-screen height is FILL_RATIO of the
+// visible frustum height by construction (see frameModel/getVisibleHeight)
+// — reusing that known relationship instead of re-measuring the live
+// bounding box every frame. Clamped at 0 so this only ever nudges the
+// model up, never below its normal centered position.
+function getModelTargetOffsetY() {
+  if (scrollProgress < RECENTER_THRESHOLD) return 0;
+
+  const verticalFit = desktopMediaQuery.matches
+    ? RECENTER_VERTICAL_FIT_DESKTOP
+    : RECENTER_VERTICAL_FIT_MOBILE;
+
+  const visibleHeight = getVisibleHeight();
+  const modelWorldHeight = FILL_RATIO * visibleHeight;
+  const fitBoundaryY = visibleHeight * (0.5 - verticalFit);
+
+  return Math.max(0, fitBoundaryY + modelWorldHeight / 2);
 }
 
 // ---------- Resize handling ----------
@@ -345,7 +492,6 @@ function onResize() {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  updateModelLayout();
 }
 
 // ---------- Init ----------
@@ -354,8 +500,7 @@ function init() {
   initLights();
   initControls();
   initScrollTracking();
-  initInspectExit();
-  initResponsiveLayout();
+  initInspectUI();
   loadPassportModel();
   window.addEventListener("resize", onResize);
   animate();
