@@ -46,6 +46,11 @@
        these ever need a shareable URL or back-button support, convert them
        to real routes instead of extending this overlay. -->
   <div id="modal-content-store" hidden>
+    <div id="modal-stamp" class="modal-panel">
+      <h2 id="modal-stamp-title">Add Your Stamp</h2>
+      <p>Once you connect your wallet, NFTs will be available as stamps.</p>
+    </div>
+
     <div id="modal-citizenship" class="modal-panel">
       <h2 id="modal-citizenship-title">Apply to Citizenship</h2>
       <p>Applications have not yet opened.</p>
@@ -64,7 +69,6 @@
   <div id="inspect-panel" class="inspect-panel">
     <button type="button" class="inspect-panel__button" data-pose="cover">Open Cover</button>
     <button type="button" class="inspect-panel__button" data-pose="page1">Page 1</button>
-    <button type="button" class="inspect-panel__button" data-pose="closed">Close Book</button>
     <button type="button" class="inspect-panel__button inspect-panel__button--close" id="inspect-exit">Exit</button>
   </div>
 
@@ -119,6 +123,7 @@
     <footer class="section" id="footer">
       <div class="cta-actions">
         <button type="button" class="cta-button cta-button--secondary" id="inspect-toggle">Check Example Passport</button>
+        <button type="button" class="cta-button cta-button--primary" data-modal="stamp">Add Your Stamp</button>
         <button type="button" class="cta-button cta-button--primary" data-modal="citizenship">Apply to Citizenship</button>
         <button type="button" class="cta-button cta-button--primary" data-modal="marriage">Apply to Marriage</button>
       </div>

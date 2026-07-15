@@ -53,8 +53,9 @@ const RECENTER_VERTICAL_FIT_MOBILE = 0.65;
 // Pose fractions for the inspect-mode panel buttons, expressed as positions
 // in the combined ~110-frame Blender timeline (cover opens ~1-30, pause,
 // first page flips ~40-70, pause, everything closes ~80-110): frame 30 is
-// the cover fully open, frame 70 is the first page fully flipped. Closed is
-// just action time 0 — named for symmetry with the other two.
+// the cover fully open, frame 70 is the first page fully flipped. Closed
+// (action time 0) has no panel button of its own — it's the entry default
+// and the forced target during exit (see setInspectMode/finishInspectExit).
 const POSE_CLOSED = 0;
 const POSE_COVER_OPEN = 30 / 110;
 const POSE_PAGE_FLIPPED = 70 / 110;
@@ -62,6 +63,10 @@ const POSE_PAGE_FLIPPED = 70 / 110;
 const CAMERA_RESET_LERP_FACTOR = 0.1;
 // How long the inspect-mode controls-onboarding hint stays up before auto-fading.
 const ONBOARDING_HINT_DURATION_MS = 4000;
+// How close (as a fraction of maxDuration) the eased action time must get to
+// POSE_CLOSED before an exit-in-progress is considered finished — see
+// finishInspectExit().
+const EXIT_CLOSE_EPSILON_FRACTION = 0.02;
 
 // ---------- Module-level state ----------
 let scene, camera, renderer;
@@ -74,9 +79,10 @@ let easedOffsetX = 0; // current eased value of modelGroup.position.x
 let easedOffsetY = 0; // current eased value of modelGroup's base y position (idle bob layers on top)
 let scrollProgress = 0; // 0 at top of page, 1 at bottom
 let controls;
-let inspectMode = false;
+let inspectMode = false; // true while OrbitControls/the inspect panel are active
+let inspectExiting = false; // true during the brief "book closing" phase after Exit, before handoff to scroll
 let initialCameraPosition, initialCameraQuaternion; // captured on entering inspect mode, restored on close
-let inspectPoseTarget = 0; // action-time target driven by the Cover/Page 1 buttons while inspecting
+let inspectPoseTarget = 0; // action-time target driven by the Cover/Page 1 buttons while inspecting, or by the exit close
 let onboardingTimeoutId = null; // pending auto-fade timer for the inspect-mode onboarding hint
 
 const clock = new THREE.Clock();
@@ -314,10 +320,13 @@ function hideInspectOnboarding() {
 }
 
 function setInspectMode(enabled) {
-  if (enabled === inspectMode) return;
-  inspectMode = enabled;
-
   if (enabled) {
+    // Ignore re-activation while already inspecting, or while a previous
+    // Exit is still mid-close (see finishInspectExit) — spamming Exit then
+    // Check Example Passport must not overlap two state transitions.
+    if (inspectMode || inspectExiting) return;
+    inspectMode = true;
+
     // Stored fresh each time rather than once at init, per the requirement —
     // though since nothing else ever moves the camera outside inspect mode,
     // this is always (0, 0, 5)/identity in practice.
@@ -330,21 +339,64 @@ function setInspectMode(enabled) {
     inspectPoseTarget = POSE_CLOSED * maxDuration;
     document.addEventListener("keydown", onInspectKeydown);
     showInspectOnboarding();
-  } else {
-    document.removeEventListener("keydown", onInspectKeydown);
-    hideInspectOnboarding();
+
+    controls.enabled = true;
+    canvas.style.pointerEvents = "auto";
+    // Locks page scroll while inspecting so it can't fight the orbit/pan/zoom
+    // gestures, and so the scroll-driven animation can't move underneath it.
+    document.body.style.overflow = "hidden";
+
+    if (ctaActions) ctaActions.classList.add("is-hidden");
+    if (inspectPanel) inspectPanel.classList.add("is-open");
+    return;
   }
 
-  controls.enabled = enabled;
-  canvas.style.pointerEvents = enabled ? "auto" : "none";
-  // Locks page scroll while inspecting so it can't fight the orbit/pan/zoom
-  // gestures, and so the scroll-driven animation can't move underneath it.
-  document.body.style.overflow = enabled ? "hidden" : "";
+  if (!inspectMode) return; // already closed, or an exit is already in progress
+  inspectMode = false;
+  inspectExiting = true; // see finishInspectExit() — scroll-driven targeting waits for the book to actually close
 
-  if (ctaActions) ctaActions.classList.toggle("is-hidden", enabled);
-  if (inspectPanel) inspectPanel.classList.toggle("is-open", enabled);
+  document.removeEventListener("keydown", onInspectKeydown);
+  hideInspectOnboarding();
 
-  if (!enabled && inspectToggle) inspectToggle.focus();
+  // Exit always closes the book first, regardless of which pose it was left
+  // in — see finishInspectExit() for why this can't just hand off to
+  // scroll-driven targeting immediately.
+  inspectPoseTarget = POSE_CLOSED * maxDuration;
+  if (actions.length === 0) finishInspectExit(); // nothing to ease — finish immediately instead of hanging forever
+
+  controls.enabled = false;
+  canvas.style.pointerEvents = "none";
+  // Scroll stays locked until finishInspectExit() completes the handoff —
+  // see there for why (scrollProgress must not drift mid-transition).
+
+  if (ctaActions) ctaActions.classList.remove("is-hidden");
+  if (inspectPanel) inspectPanel.classList.remove("is-open");
+
+  if (inspectToggle) inspectToggle.focus();
+}
+
+// Ends an in-progress exit once the book has visibly finished easing to
+// POSE_CLOSED. Called from animate() each frame while inspectExiting is
+// true, as soon as the eased action time is within EXIT_CLOSE_EPSILON_FRACTION
+// of that target (or immediately, if there was never anything to ease).
+//
+// Root cause this works around: the clip's timeline is closed at BOTH ends —
+// action time 0 (before the cover has opened) and action time maxDuration
+// (after everything has closed again) render the identical pose despite
+// being numerically far apart. Handing control back to scroll-driven
+// targeting too early would set the target to ~maxDuration while the eased
+// value was still near 0 (or wherever the inspected pose left it), and a
+// plain per-frame lerp between those two numbers necessarily travels through
+// every open/flip frame in between — the visible re-open/re-close replay
+// this whole function exists to prevent. Snapping (not lerping) straight to
+// the scroll-driven target here is safe specifically because both ends of
+// the clip look the same: the jump is numerically large but visually zero.
+// Scroll was kept locked for the whole exit so scrollProgress can't have
+// drifted to something else in the meantime.
+function finishInspectExit() {
+  inspectExiting = false;
+  easedActionTime = scrollProgress * maxDuration;
+  document.body.style.overflow = "";
 }
 
 function initInspectUI() {
@@ -355,14 +407,9 @@ function initInspectUI() {
     inspectExitButton.addEventListener("click", () => setInspectMode(false));
   }
 
-  // "Close Book" (data-pose="closed") eases the animation back to 0 but
-  // stays in inspect mode — distinct from "Exit", which leaves inspect mode
-  // entirely. Splitting these two avoids the old single "Close" button being
-  // ambiguous between the two meanings.
   const posesByKey = {
     cover: POSE_COVER_OPEN,
     page1: POSE_PAGE_FLIPPED,
-    closed: POSE_CLOSED,
   };
 
   document.querySelectorAll("[data-pose]").forEach((button) => {
@@ -408,19 +455,30 @@ function animate() {
   if (actions.length > 0) {
     // One eased time value shared by every clip, so the cover-open,
     // page-flip, and close-all clips all advance together as a single
-    // sequence. Normally scroll-driven; while inspecting, the Cover/Page 1
-    // buttons drive it instead (no scroll influence — page scroll is locked
-    // anyway) and closing hands it back to scroll with no snap, since it's
-    // the same eased value either way. Each clip's own time is clamped to
-    // its own duration in case clips don't all run exactly maxDuration long.
-    const targetActionTime = inspectMode
-      ? inspectPoseTarget
-      : scrollProgress * maxDuration;
+    // sequence. Normally scroll-driven; while inspecting OR mid-exit, the
+    // target is forced instead (pose buttons, or POSE_CLOSED while exiting)
+    // so scroll-driven targeting never inserts an intermediate non-zero
+    // target during the handoff — see finishInspectExit() for why that
+    // matters. Each clip's own time is clamped to its own duration in case
+    // clips don't all run exactly maxDuration long.
+    const targetActionTime =
+      inspectMode || inspectExiting
+        ? inspectPoseTarget
+        : scrollProgress * maxDuration;
     easedActionTime = THREE.MathUtils.lerp(
       easedActionTime,
       targetActionTime,
       SCRUB_LERP_FACTOR
     );
+
+    if (
+      inspectExiting &&
+      Math.abs(easedActionTime - inspectPoseTarget) <
+        maxDuration * EXIT_CLOSE_EPSILON_FRACTION
+    ) {
+      finishInspectExit();
+    }
+
     for (const clipAction of actions) {
       clipAction.time = THREE.MathUtils.clamp(
         easedActionTime,
